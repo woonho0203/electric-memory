@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   BookOpen, Brain, Moon, Sun, Save, PlusCircle, ChevronLeft, Calendar, X, ArrowLeft, 
-  BarChart3, CheckCircle, Clock, Timer, AlertCircle, RotateCcw, ImageIcon, ChevronRight
+  BarChart3, CheckCircle, Clock, Timer, AlertCircle, RotateCcw, ImageIcon
 } from 'lucide-react';
 
 import { ALL_EXAM_DATA } from './data'; 
@@ -308,13 +308,6 @@ const App: React.FC = () => {
       ...prev,
       [yearKey]: (prev[yearKey] || 1) + 1
     }));
-  };
-
-  // 다음 회차 시작 버튼
-  const handleNextSession = () => {
-    if (!selectedYear) return;
-    incrementSession(selectedYear);
-    setView('detail');
   };
 
   // 리포트에서 목록으로 → 회차 자동 증가

@@ -2,6 +2,7 @@
  * ⚡ SparkMemory - 전기기사 실기 암기 최적화 시스템
  * [수정사항: 2-Button(안다/모른다) + 회차(Session) 기반 복습 주기로 전면 교체]
  * [기능 유지: 2003-2025 그리드, 갤럭시 Fix 100% 유지, 이미지 축소 유지, 연도 정규화 유지]
+ * [추가: KaTeX 수식 렌더링]
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
@@ -10,6 +11,11 @@ import {
 } from 'lucide-react';
 
 import { ALL_EXAM_DATA } from './data'; 
+
+// ✅ KaTeX 수식 렌더링
+import { InlineMath, BlockMath } from 'react-katex';
+import 'katex/dist/katex.min.css';
+
 
 type QuestionStat = {
   know: number;
@@ -22,10 +28,9 @@ type LogEntry = {
   scores: Record<string, number>;
   totalTime?: number;
   lastStudyTime?: string;
-  questionStats?: Record<string, QuestionStat>; // key: "문제번호" e.g. "1", "2"
+  questionStats?: Record<string, QuestionStat>;
 };
 
-// 회차 기반 리포트 항목
 type ReportItem = {
   id: any;
   question_no: number;
@@ -52,7 +57,6 @@ const App: React.FC = () => {
     return sourceData.map((q: any, index: number): any => {
       const safeId = q.id ? q.id : Date.now() + index;
       
-      // 연도 데이터 형식 정규화
       let formattedYear = String(q.year || "연도 미상");
       if (formattedYear.includes('-')) {
         const parts = formattedYear.split('-');
@@ -81,10 +85,8 @@ const App: React.FC = () => {
         answer: q.answer || "정답 없음",
         image_url: q.image_url || null, 
         answer_image_url: q.answer_image_url || null, 
-        // 회차 기반 필드
         interval: (typeof q.interval === 'number') ? q.interval : 0,
         next_review_session: (typeof q.next_review_session === 'number') ? q.next_review_session : 1,
-        // 하위 호환: 기존 SM-2 필드 제거 안 함 (데이터 안전)
         repetition: (typeof q.repetition === 'number') ? q.repetition : 0,
         ef: (typeof q.ef === 'number') ? q.ef : 2.5,
         next_review_date: (typeof q.next_review_date === 'number') ? q.next_review_date : Date.now() 
@@ -92,7 +94,6 @@ const App: React.FC = () => {
     });
   });
 
-  // 연도별 현재 회차 세션 번호
   const [sessionMap, setSessionMap] = useState<Record<string, number>>(() => {
     try {
       const saved = localStorage.getItem('spark-memory-session-map');
@@ -117,7 +118,6 @@ const App: React.FC = () => {
   const [showAnswer, setShowAnswer] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   
-  // 최종 리포트 데이터
   const [reportItems, setReportItems] = useState<ReportItem[]>([]);
 
   const [newQ, setNewQ] = useState('');
@@ -129,10 +129,36 @@ const App: React.FC = () => {
 
   const yearList = Array.from({ length: 2024 - 2003 + 1 }, (_, i) => 2024 - i);
 
-  // 현재 선택된 연도의 session 번호
   const getCurrentSession = useCallback((yearKey: string) => {
     return sessionMap[yearKey] || 1;
   }, [sessionMap]);
+
+  // -------------------------------------------------------------------------
+  // ✅ 수식 렌더링 헬퍼 (KaTeX)
+  // -------------------------------------------------------------------------
+  const renderMath = (text: string) => {
+    if (!text) return null;
+    // $$...$$ (블록 수식) 먼저, 그 다음 $...$ (인라인 수식) 처리
+    const parts = text.split(/(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g);
+    return (
+      <>
+        {parts.map((part, i) => {
+          if (part.startsWith('$$') && part.endsWith('$$')) {
+            return <BlockMath key={i} math={part.slice(2, -2).trim()} />;
+          }
+          if (part.startsWith('$') && part.endsWith('$')) {
+            return <InlineMath key={i} math={part.slice(1, -1).trim()} />;
+          }
+          // 일반 텍스트: 줄바꿈 보존
+          return (
+            <span key={i} style={{ whiteSpace: 'pre-wrap' }}>
+              {part}
+            </span>
+          );
+        })}
+      </>
+    );
+  };
 
   // -------------------------------------------------------------------------
   // 이미지 렌더링 헬퍼
@@ -197,7 +223,6 @@ const App: React.FC = () => {
   const startStudy = () => {
     if (!selectedYear) return;
     const currentSession = getCurrentSession(selectedYear);
-    // next_review_session <= currentSession 인 문제들만
     const dueList = questions.filter(q => q.year === selectedYear && (q.next_review_session || 1) <= currentSession);
     if (dueList.length > 0) {
       setStudyQueue(dueList);
@@ -217,19 +242,13 @@ const App: React.FC = () => {
     } 
   }, [currentIndex]);
 
-  // ✅ 2-Button 핵심 로직: 회차 기반 복습 주기 계산
   const processReview = useCallback((result: 'know' | 'dontknow') => {
     if (!currentCard || !selectedYear) return;
 
     const currentSession = getCurrentSession(selectedYear);
-    
-    // 회차 기반 interval 계산
-    // 모른다: interval = 1 (다음 회차에 즉시 재등장)
-    // 안다:   interval = 2 (다다음 회차에 등장)
     const interval = result === 'dontknow' ? 1 : 2;
     const next_review_session = currentSession + interval;
 
-    // 문제 데이터 업데이트 (메모리 + localStorage)
     const updatedQuestions = questions.map((q) => 
       q.id === currentCard.id 
         ? { ...q, interval, next_review_session } 
@@ -237,7 +256,6 @@ const App: React.FC = () => {
     );
     setQuestions(updatedQuestions);
 
-    // 리포트 항목 수집
     const newReportItem: ReportItem = {
       id: currentCard.id,
       question_no: currentCard.question_no,
@@ -286,12 +304,10 @@ const App: React.FC = () => {
     });
 
     if (currentIndex < studyQueue.length - 1) {
-      // 다음 문제로
       setReportItems(prev => [...prev, newReportItem]);
       setCurrentIndex(prev => prev + 1);
       setShowAnswer(false);
     } else {
-      // 회차 완료 → 회차 증가 + 학습 종료 화면
       const finalReport = [...reportItems, newReportItem];
       setReportItems(finalReport);
       if (selectedYear) {
@@ -302,7 +318,6 @@ const App: React.FC = () => {
     }
   }, [currentCard, questions, currentIndex, studyQueue, selectedYear, getCurrentSession, reportItems]);
 
-  // 회차 증가 공통 함수
   const incrementSession = (yearKey: string) => {
     setSessionMap((prev: Record<string, number>) => ({
       ...prev,
@@ -310,7 +325,6 @@ const App: React.FC = () => {
     }));
   };
 
-  // 리포트에서 목록으로 → 회차 자동 증가
   const handleReportToList = () => {
     if (selectedYear) incrementSession(selectedYear);
     setView('list');
@@ -444,7 +458,6 @@ const App: React.FC = () => {
             <button onClick={() => setView('add')} className="w-full py-4 bg-gray-900 border border-gray-800 text-gray-400 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-800 transition-all">
               <PlusCircle className="w-5 h-5" /> 새 문제 추가하기
             </button>
-
           </div>
         )}
 
@@ -454,7 +467,6 @@ const App: React.FC = () => {
             <button onClick={() => setView('list')} className="flex items-center text-gray-400 text-sm hover:text-white"><ChevronLeft className="w-4 h-4 mr-1" /> 목록으로</button>
             <h1 className="text-2xl font-bold text-white">{selectedYear}</h1>
             
-            {/* 현재 회차 정보 */}
             <div className="bg-blue-900/20 border border-blue-800/50 rounded-xl p-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-blue-300 font-bold">현재 학습 회차</span>
@@ -484,7 +496,7 @@ const App: React.FC = () => {
         {/* ===== STUDY VIEW ===== */}
         {view === 'study' && currentCard && selectedYear && (
           <div className="flex flex-col h-full animate-in zoom-in-95 duration-300">
-            {/* 헤더: 회차 + 진행 표시 */}
+            {/* 헤더 */}
             <div className="flex justify-between items-center mb-4">
                <div className="flex items-center gap-2">
                 <button onClick={handlePrevCard} disabled={currentIndex === 0} className={`p-2 rounded-full ${currentIndex === 0 ? 'text-gray-700' : 'text-gray-300 hover:bg-gray-800'}`}><ArrowLeft className="w-5 h-5" /></button>
@@ -503,13 +515,13 @@ const App: React.FC = () => {
               <button onClick={() => setView('detail')} className="text-gray-500 hover:text-white"><X className="w-6 h-6" /></button>
             </div>
 
-            {/* 문제 카드 */}
+            {/* ✅ 문제 카드 (수식 렌더링 적용) */}
             <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 md:p-12 lg:p-16 xl:p-16 mb-6 shadow-sm relative min-h-[30vh] md:min-h-[30vh] flex flex-col justify-center max-w-9xl mx-auto w-full"> 
               <div className="absolute top-5 left-5 text-blue-500 font-black text-xl md:text-3xl lg:text-4xl">Q.</div>
               <div className="pl-6 md:pl-16 lg:pl-20">
-                <h3 className="text-[18px] md:text-xs lg:text-2xl xl:text-2xl font-medium text-gray-100 leading-relaxed md:leading-snug lg:leading-tight whitespace-pre-wrap break-keep">
-                  {currentCard?.question?.replace(/([.?])/g, '$1\n') || "문제를 불러올 수 없습니다."}
-                </h3>
+                <div className="text-[18px] md:text-xs lg:text-2xl xl:text-2xl font-medium text-gray-100 leading-relaxed md:leading-snug lg:leading-tight">
+                  {renderMath(currentCard?.question || "문제를 불러올 수 없습니다.")}
+                </div>
               </div>
               
               {currentCard.image_url && (
@@ -519,12 +531,14 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* 답안 + 2-Button 평가 */}
+            {/* ✅ 답안 + 2-Button (수식 렌더링 적용) */}
             {showAnswer ? (
               <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 flex-1 flex flex-col justify-end">
                 <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-5 md:p-8 mb-4">
                   <div className="flex items-center gap-2 mb-2 text-green-400 font-bold text-sm md:text-lg"><CheckCircle className="w-4 h-4" /> 답안</div>
-                  <p className="text-[15px] md:text-xl text-gray-200 whitespace-pre-line leading-relaxed mb-4">{currentCard.answer}</p>
+                  <div className="text-[15px] md:text-xl text-gray-200 leading-relaxed mb-4">
+                    {renderMath(currentCard.answer)}
+                  </div>
                   
                   {currentCard.answer_image_url && (
                     <div className="mt-4 border border-gray-600 rounded-lg overflow-hidden bg-white mx-auto p-2">
@@ -533,7 +547,7 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                {/* ✅ 2-Button 평가 */}
+                {/* 2-Button 평가 */}
                 <div className="grid grid-cols-2 gap-3">
                   <button 
                     onClick={() => processReview('dontknow')} 
@@ -564,10 +578,9 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* ===== REPORT VIEW (학습 종료창) ===== */}
+        {/* ===== REPORT VIEW ===== */}
         {view === 'report' && selectedYear && (
           <div className="space-y-6 animate-in fade-in duration-300 pb-20">
-            {/* 완료 헤더 */}
             <div className="text-center py-6">
               <div className="text-5xl mb-3">🎉</div>
               <h1 className="text-2xl font-bold">학습 완료!</h1>
@@ -577,7 +590,6 @@ const App: React.FC = () => {
               </p>
             </div>
 
-            {/* 이번 회차 요약 */}
             {(() => {
               const knowCount = reportItems.filter(r => r.result === 'know').length;
               const dontknowCount = reportItems.filter(r => r.result === 'dontknow').length;
@@ -608,7 +620,6 @@ const App: React.FC = () => {
               );
             })()}
 
-            {/* 문제별 결과 테이블 */}
             <div>
               <h2 className="text-sm font-bold text-gray-400 uppercase mb-3 flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-blue-500" /> 문제별 결과
@@ -647,7 +658,6 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* 버튼 */}
             <div className="space-y-3">
               <button
                 onClick={() => { setView('detail'); }}
@@ -662,7 +672,6 @@ const App: React.FC = () => {
           </div>
         )}
 
-
         {/* ===== STATS VIEW ===== */}
         {view === 'stats' && (
           <div className="space-y-6 animate-in fade-in duration-300 pb-20">
@@ -676,9 +685,7 @@ const App: React.FC = () => {
               <h1 className="text-xl font-bold">학습 통계</h1>
             </div>
 
-            {/* 전체 누적 요약 */}
             {(() => {
-              // 연도별 회독수 집계: "2024년 1회 [3회차]" 에서 최대 회차 추출
               const yearSessionMax: Record<string, number> = {};
               Object.values(studyLogs).forEach((dayLog: any) => {
                 Object.keys(dayLog).forEach(key => {
@@ -696,7 +703,6 @@ const App: React.FC = () => {
               const allEntries = Object.values(studyLogs).flatMap(day => Object.values(day));
               const totalTime = allEntries.reduce((s: number, d: any) => s + (d.totalTime || 0), 0);
 
-              // 총 공부 시간 포맷 (시간:분:초)
               const totalSec = Math.round(totalTime);
               const hh = Math.floor(totalSec / 3600);
               const mm = Math.floor((totalSec % 3600) / 60);
@@ -713,7 +719,6 @@ const App: React.FC = () => {
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
                   <p className="text-xs text-gray-500 font-bold uppercase">전체 누적 통계</p>
 
-                  {/* 총 공부 시간 */}
                   <div className="bg-blue-900/20 border border-blue-800/40 rounded-xl p-4 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Timer className="w-5 h-5 text-blue-400" />
@@ -722,7 +727,6 @@ const App: React.FC = () => {
                     <span className="text-xl font-black text-blue-400">{timeStr}</span>
                   </div>
 
-                  {/* 회차별 회독수 테이블 */}
                   {sortedYears.length === 0 ? (
                     <p className="text-sm text-gray-600 text-center py-2">학습 기록 없음</p>
                   ) : (
@@ -756,7 +760,6 @@ const App: React.FC = () => {
               );
             })()}
 
-            {/* 날짜 + 연도 + 회차별 상세 */}
             {Object.keys(studyLogs).length === 0 ? (
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
                 <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -766,8 +769,6 @@ const App: React.FC = () => {
               <div className="space-y-6">
                 <h2 className="text-sm font-bold text-gray-400 uppercase">날짜별 기록</h2>
                 {Object.entries(studyLogs).sort((a, b) => b[0].localeCompare(a[0])).map(([date, sessions]) => {
-                  // sessions: { "2024년 1회 [1회차]": LogEntry, ... }
-                  // 연도키별로 묶기: { "2024년 1회": { "1회차": LogEntry, ... } }
                   const grouped: Record<string, Record<string, any>> = {};
                   Object.entries(sessions).forEach(([key, data]) => {
                     const match = key.match(/^(.+) \[(\d+회차)\]$/);
@@ -777,7 +778,6 @@ const App: React.FC = () => {
                       if (!grouped[yearPart]) grouped[yearPart] = {};
                       grouped[yearPart][sessionPart] = data;
                     } else {
-                      // 구버전 키 (회차 없는 것) 호환
                       if (!grouped[key]) grouped[key] = {};
                       grouped[key]['기록'] = data;
                     }
@@ -788,7 +788,6 @@ const App: React.FC = () => {
 
                   return (
                     <div key={date}>
-                      {/* 날짜 헤더 */}
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-sm font-bold text-white border-l-2 border-blue-500 pl-2">{date}</span>
                         <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -797,7 +796,6 @@ const App: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* 연도별 카드 */}
                       <div className="space-y-3">
                         {Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0])).map(([yearPart, sessionEntries]) => {
                           const yearTotal = Object.values(sessionEntries).reduce((s: number, d: any) => s + (d.total || 0), 0);
@@ -806,7 +804,6 @@ const App: React.FC = () => {
 
                           return (
                             <div key={yearPart} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-                              {/* 연도 헤더 */}
                               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-800/60">
                                 <span className="text-sm font-black text-blue-300">{yearPart}</span>
                                 <div className="flex items-center gap-3 text-xs">
@@ -816,7 +813,6 @@ const App: React.FC = () => {
                                 </div>
                               </div>
 
-                              {/* 회차별 행 */}
                               <div className="divide-y divide-gray-800/50">
                                 {Object.entries(sessionEntries)
                                   .sort((a, b) => {
@@ -831,7 +827,6 @@ const App: React.FC = () => {
                                     const rate = total > 0 ? Math.round((know / total) * 100) : 0;
                                     return (
                                       <div key={sessionLabel} className="px-4 py-3">
-                                        {/* 회차 레이블 */}
                                         <div className="flex justify-between items-center mb-2">
                                           <span className="text-xs font-black text-yellow-400 bg-yellow-900/20 px-2 py-0.5 rounded-full border border-yellow-800/40">{sessionLabel}</span>
                                           <div className="flex items-center gap-2">
@@ -839,7 +834,6 @@ const App: React.FC = () => {
                                             <span className="text-xs font-bold text-white bg-gray-700 px-2 py-0.5 rounded-full">{rate}% 정답</span>
                                           </div>
                                         </div>
-                                        {/* 안다/모른다 카드 */}
                                         <div className="grid grid-cols-3 gap-2">
                                           <div className="bg-red-900/20 border border-red-900/30 rounded-lg p-2 text-center">
                                             <p className="text-[9px] text-red-400 font-bold mb-1">🔴 모른다</p>
@@ -857,13 +851,11 @@ const App: React.FC = () => {
                                             <p className="text-[9px] text-gray-600">{formatDuration(data.totalTime)}</p>
                                           </div>
                                         </div>
-                                        {/* 진행바 */}
                                         <div className="mt-2 w-full bg-gray-800 rounded-full h-1.5 overflow-hidden flex">
                                           <div style={{ width: `${total > 0 ? (dontknow/total)*100 : 0}%` }} className="bg-red-500" />
                                           <div style={{ width: `${total > 0 ? (know/total)*100 : 0}%` }} className="bg-blue-500" />
                                         </div>
 
-                                        {/* 문제 번호별 상세 */}
                                         {data.questionStats && Object.keys(data.questionStats).length > 0 && (
                                           <div className="mt-3">
                                             <p className="text-[10px] text-gray-500 font-bold uppercase mb-2">문제별 상세</p>
